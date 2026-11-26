@@ -1,4 +1,4 @@
-"""Melvin's component: connect capture parser, rule detector, and result output."""
+"""Run captures through the parser and rule detector, then save the results."""
 
 from __future__ import annotations
 
@@ -6,6 +6,7 @@ import csv
 import json
 import time
 from dataclasses import asdict
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable, Iterable
 
@@ -16,6 +17,21 @@ from .rules import RuleDetector
 
 # Reader injection allows end-to-end runner tests without Scapy or PCAP files.
 Reader = Callable[[str | Path], Iterable[PacketEvent]]
+
+
+def readable_time(timestamp: float) -> str:
+    """Format a capture timestamp as local date and time with milliseconds.
+
+    Matches Wireshark's "Date and Time of Day" column on the same computer,
+    so an alert can be found in Wireshark by its time. Windows cannot convert
+    times near 1970 to local time (devices without a clock record those), so
+    those fall back to UTC.
+    """
+    try:
+        moment = datetime.fromtimestamp(timestamp).astimezone()
+    except (OSError, OverflowError, ValueError):
+        moment = datetime.fromtimestamp(timestamp, tz=timezone.utc)
+    return moment.isoformat(sep=" ", timespec="milliseconds")
 
 
 def estimate_baseline(path: str | Path, reader: Reader = read_capture) -> dict:
@@ -74,18 +90,26 @@ def analyze_capture(
         "throughput_ip_packets_per_second": round(counts["ip_packets"] / duration, 1)
         if duration > 0 else None,
         "rule_counts": {rule: sum(a.rule == rule for a in alerts) for rule in rules},
-        "alerts": [asdict(alert) for alert in alerts],
+        "alerts": [{**asdict(alert), "time": readable_time(alert.timestamp)}
+                   for alert in alerts],
     }
 
 
 def write_results(results: list[dict], config: RuleConfig, baseline: dict | None,
-                  json_path: str | Path, csv_path: str | Path) -> None:
-    """Export a machine-readable summary and one alert per CSV row."""
+                  json_path: str | Path, csv_path: str | Path,
+                  errors: list[dict] | None = None) -> None:
+    """Export a machine-readable summary and one alert per CSV row.
+
+    `errors` lists captures that could not be read. They are kept apart from
+    `results` so evaluate.py never mistakes an unreadable capture for one that
+    was analyzed and produced no alerts.
+    """
     Path(json_path).parent.mkdir(parents=True, exist_ok=True)
     Path(csv_path).parent.mkdir(parents=True, exist_ok=True)
-    payload = {"config": asdict(config), "baseline": baseline, "results": results}
+    payload = {"config": asdict(config), "baseline": baseline,
+               "results": results, "errors": errors or []}
     Path(json_path).write_text(json.dumps(payload, indent=2), encoding="utf-8")
-    columns = ["capture", "rule", "source", "destination", "timestamp",
+    columns = ["capture", "rule", "source", "destination", "time", "timestamp",
                "observed", "threshold", "window_seconds", "detail"]
     with Path(csv_path).open("w", newline="", encoding="utf-8") as out:
         writer = csv.DictWriter(out, fieldnames=columns)

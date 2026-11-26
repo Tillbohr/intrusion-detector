@@ -2,6 +2,7 @@ import csv
 import json
 import tempfile
 import unittest
+from datetime import datetime
 from pathlib import Path
 
 from cache_ids.models import PacketEvent
@@ -46,6 +47,27 @@ class RunnerTests(unittest.TestCase):
                 rows = list(csv.DictReader(f))
             self.assertEqual(len(rows), 1)
             self.assertEqual(rows[0]["rule"], "port_scan")
+
+    def test_alerts_include_readable_time(self):
+        ev = [PacketEvent(1792119670 + i / 100, "a", "b", "TCP", i + 20, True) for i in range(20)]
+        alert = analyze_capture("scan.pcapng", reader=make_reader(ev))["alerts"][0]
+        parsed = datetime.fromisoformat(alert["time"])
+        self.assertAlmostEqual(parsed.timestamp(), alert["timestamp"], delta=0.001)
+
+    def test_unreadable_captures_are_saved_apart_from_results(self):
+        ev = [PacketEvent(i / 100, "a", "b", "TCP", i + 20, True) for i in range(20)]
+        result = analyze_capture("scan.pcapng", reader=make_reader(ev))
+        errors = [{"capture": "broken.pcapng", "error": "not a capture"}]
+        with tempfile.TemporaryDirectory() as tmp:
+            json_name = Path(tmp) / "results.json"
+            csv_name = Path(tmp) / "alerts.csv"
+            write_results([result], RuleConfig(), None, json_name, csv_name, errors)
+            payload = json.loads(json_name.read_text())
+            with csv_name.open(newline="") as f:
+                header = next(csv.reader(f))
+        self.assertEqual(payload["errors"], errors)
+        self.assertEqual([r["capture"] for r in payload["results"]], ["scan.pcapng"])
+        self.assertIn("time", header)
 
     def test_empty_capture(self):
         result = analyze_capture("empty.pcapng", reader=make_reader([]))

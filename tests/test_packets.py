@@ -1,4 +1,4 @@
-"""Mocked parser contract tests; actual Scapy/PCAP integration must be tested separately."""
+"""Parser tests using fake Scapy layers. Real-capture tests are in test_real_captures.py."""
 from __future__ import annotations
 
 import sys

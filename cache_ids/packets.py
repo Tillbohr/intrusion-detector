@@ -1,7 +1,8 @@
-"""Melvin's component: stream saved PCAP/PCAPNG captures into PacketEvent objects.
+"""Read saved PCAP/PCAPNG captures and convert each packet into a PacketEvent.
 
-All capture reading happens here. There is intentionally NO live-sniffing code.
-Scapy is imported lazily so rule and runner tests can run without Scapy.
+This module only reads capture files; it does not sniff live traffic.
+Scapy is imported inside the functions so the rule and runner tests can run
+without Scapy installed.
 """
 
 from __future__ import annotations
@@ -10,6 +11,25 @@ from pathlib import Path
 from typing import Iterator
 
 from .models import PacketEvent
+
+_SCAPY_MISSING = "Scapy is missing. Run: python -m pip install -r requirements.txt"
+
+
+class CaptureError(ValueError):
+    """The file exists, but Scapy cannot read it as a PCAP/PCAPNG capture."""
+
+
+def require_scapy() -> None:
+    """Import Scapy up front.
+
+    Scapy's first import takes most of a second. Calling this before timing
+    anything keeps that one-time cost out of the first capture's processing
+    time, and a missing install is reported before any work starts.
+    """
+    try:
+        import scapy.all  # noqa: F401
+    except ImportError as exc:
+        raise RuntimeError(_SCAPY_MISSING) from exc
 
 
 def packet_to_event(packet: object) -> PacketEvent | None:
@@ -22,9 +42,7 @@ def packet_to_event(packet: object) -> PacketEvent | None:
     try:
         from scapy.all import IP, IPv6, TCP, UDP
     except ImportError as exc:
-        raise RuntimeError(
-            "Scapy is missing. Run: python -m pip install -r requirements.txt"
-        ) from exc
+        raise RuntimeError(_SCAPY_MISSING) from exc
 
     if IP in packet:
         network = packet[IP]
@@ -69,8 +87,13 @@ def packet_to_event(packet: object) -> PacketEvent | None:
 def read_capture(path: str | Path) -> Iterator[PacketEvent]:
     """Yield IP packet events in capture order without loading whole files.
 
-    Raises FileNotFoundError for missing captures and RuntimeError when Scapy
-    is not installed. Truncated or invalid captures raise parser errors.
+    Raises FileNotFoundError for a missing file, CaptureError for a file that
+    is not a PCAP/PCAPNG capture (wrong format or empty), and RuntimeError
+    when Scapy is not installed.
+
+    A capture that was cut off partway does not raise an error: Scapy prints
+    a "PcapNg: ..." warning and stops, so only the packets before the damage
+    are returned.
     """
     capture_path = Path(path)
     if not capture_path.is_file():
@@ -78,13 +101,17 @@ def read_capture(path: str | Path) -> Iterator[PacketEvent]:
 
     try:
         from scapy.all import PcapReader
+        from scapy.error import Scapy_Exception
     except ImportError as exc:
-        raise RuntimeError(
-            "Scapy is missing. Run: python -m pip install -r requirements.txt"
-        ) from exc
+        raise RuntimeError(_SCAPY_MISSING) from exc
 
-    with PcapReader(str(capture_path)) as reader:
-        for packet in reader:
-            event = packet_to_event(packet)
-            if event is not None:
-                yield event
+    try:
+        with PcapReader(str(capture_path)) as reader:
+            for packet in reader:
+                event = packet_to_event(packet)
+                if event is not None:
+                    yield event
+    except Scapy_Exception as exc:
+        raise CaptureError(
+            f"{capture_path.name} is not a readable PCAP/PCAPNG capture ({exc})"
+        ) from exc

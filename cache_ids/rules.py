@@ -1,8 +1,10 @@
-"""Kaleb's component: detection rules operating on PacketEvent objects.
+"""Detection rules that turn PacketEvent objects into Alerts.
 
-Starter rules carried over from the previous team starter. They are NOT
-validated against the project's recorded traffic. Kaleb should own tuning,
-rule tests, explanations, and the limitations of these heuristics.
+Each rule counts initiating TCP SYNs inside a sliding time window:
+- port_scan: one source reaches many distinct ports on one destination.
+- repeated_syn: one source keeps opening connections to the same destination port.
+- high_connection_rate: optional; one source's SYN rate exceeds a threshold
+  derived from a known-normal baseline capture.
 """
 
 from __future__ import annotations

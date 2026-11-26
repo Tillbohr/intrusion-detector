@@ -1,7 +1,4 @@
-"""Shared data contracts for packet parsing and rule detection.
-
-Melvin owns parser/runner integration; Kaleb can modify rules.py independently.
-"""
+"""Data classes shared by the packet parser, the detection rules and the runner."""
 
 from __future__ import annotations
 
@@ -34,7 +31,7 @@ class Alert:
 
 @dataclass(frozen=True)
 class RuleConfig:
-    # Proposed Milestone 2 thresholds. They have NOT been calibrated against PCAPs.
+    # Default thresholds from the Milestone 2 proposal.
     scan_ports: int = 20
     scan_seconds: int = 10
     repeated_syns: int = 30
